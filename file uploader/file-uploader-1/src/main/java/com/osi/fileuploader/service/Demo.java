@@ -1,4 +1,5 @@
 package com.osi.fileuploader.service;
+
 import java.io.IOException;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -22,98 +23,122 @@ public class Demo {
 	private JdbcTemplate jdbcTemplate;
 
 	public void fileUploader(MultipartFile file) throws SQLException, IOException {
-	    try (Workbook workbook = WorkbookFactory.create(file.getInputStream());
-	         Connection conn = jdbcTemplate.getDataSource().getConnection()) {
+		try (Workbook workbook = WorkbookFactory.create(file.getInputStream());
+				Connection conn = jdbcTemplate.getDataSource().getConnection()) {
 
-	        int numberOfSheets = workbook.getNumberOfSheets();
+			int numberOfSheets = workbook.getNumberOfSheets();
 
-	        for (int sheetIndex = 0; sheetIndex < numberOfSheets; sheetIndex++) {
-	            Sheet sheet = workbook.getSheetAt(sheetIndex);
+			for (int sheetIndex = 0; sheetIndex < numberOfSheets; sheetIndex++) {
+				Sheet sheet = workbook.getSheetAt(sheetIndex);
 
-	            List<String> names = new ArrayList<>();
-	            List<Boolean> isDateColumn = new ArrayList<>(); // Track if column is a date or not
+				List<String> names = new ArrayList<>();
+				List<Boolean> isDateColumn = new ArrayList<>(); // Track if column is a date or not
+				List<Boolean> isNumericColumn = new ArrayList<>(); // Track if column is numeric or not
 
-	            for (int columnNumber = sheet.getRow(0).getFirstCellNum(); columnNumber < sheet.getRow(0)
-	                    .getLastCellNum(); columnNumber++) {
-	                String columnName = sheet.getRow(0).getCell(columnNumber).getStringCellValue();
-	                names.add(columnName);
+				for (int columnNumber = sheet.getRow(0).getFirstCellNum(); columnNumber < sheet.getRow(0)
+						.getLastCellNum(); columnNumber++) {
+					String columnName = sheet.getRow(0).getCell(columnNumber).getStringCellValue();
+					if(columnName == null || columnName.trim().isEmpty()) {
+						columnName = "Blank" + (columnNumber + 1);
+					}
+					names.add(columnName);
 
-	                // Check if column name contains "date" (case-insensitive)
-	                isDateColumn.add(columnName.toLowerCase().contains("date"));
-	            }
+					// Check if column name contains "date" (case-insensitive)
+					isDateColumn.add(columnName.toLowerCase().contains("date"));
 
-	            String tableName = file.getOriginalFilename() + sheet.getSheetName().toString();
-	            tableName = tableName.replaceAll("[^\\w\\s]", "").replace(" ", "").toLowerCase();
+					// Check if column is numeric
+					isNumericColumn.add(sheet.getRow(1).getCell(columnNumber).getCellType() == CellType.NUMERIC);
+					
+				}
+				
+				
 
-	            if (tableExists(tableName)) {
-	                // Drop existing table
-	                String dropQuery = "DROP TABLE " + tableName;
-	                jdbcTemplate.execute(dropQuery);
-	                System.out.println("Table " + tableName + " already exists. Dropped existing table.");
-	            }
+				String tableName = file.getOriginalFilename() + sheet.getSheetName().toString();
+				tableName = tableName.replaceAll("[^\\w\\s]", "").replace(" ", "").toLowerCase();
+				
+				
 
-	            StringBuilder sb = new StringBuilder("CREATE TABLE " + tableName + " (");
+				if (tableExists(tableName)) {
+					// Drop existing table
+					String dropQuery = "DROP TABLE " + tableName;
+					jdbcTemplate.execute(dropQuery);
+					System.out.println("Table " + tableName + " already exists. Dropped existing table.");
+				}
+				
 
-	            for (int i = 0; i < names.size(); i++) {
-	                String name = names.get(i);
-	                sb.append(name.replaceAll("[^\\w\\s]", "").replace(" ", "").toLowerCase());
-	                if (isDateColumn.get(i)) {
-	                    sb.append(" DATE,");
-	                } else {
-	                    sb.append(" VARCHAR(255),");
-	                }
-	            }
+				StringBuilder sb = new StringBuilder("CREATE TABLE " + tableName + " (");
 
-	            String createQuery = sb.substring(0, sb.length() - 1) + ");";
-	            jdbcTemplate.execute(createQuery);
+				for (int i = 0; i < names.size(); i++) {
+					String name = names.get(i);
+					sb.append(name.replaceAll("[^\\w\\s]", "").replace(" ", "").toLowerCase());
+					if (isDateColumn.get(i)) {
+						sb.append(" DATE,");
+					} else {
+						sb.append(" VARCHAR(255),");
+					}
+				}
 
-	            PreparedStatement statement = conn.prepareStatement(generateInsertQuery(tableName, names));
+				String createQuery = sb.substring(0, sb.length() - 1) + ");";
+				jdbcTemplate.execute(createQuery);
 
-	            for (int rowNumber = 1; rowNumber <= sheet.getLastRowNum(); rowNumber++) {
-	                for (int columnNumber = 0; columnNumber < names.size(); columnNumber++) {
-	                    if (sheet.getRow(rowNumber).getCell(columnNumber).getCellType() == CellType.STRING) {
-	                        statement.setString(columnNumber + 1,
-	                                sheet.getRow(rowNumber).getCell(columnNumber).getStringCellValue());
-	                    } else if (sheet.getRow(rowNumber).getCell(columnNumber).getCellType() == CellType.NUMERIC) {
-	                        if (isDateColumn.get(columnNumber)) {
-	                            Date date = sheet.getRow(rowNumber).getCell(columnNumber).getDateCellValue();
-	                            if (date != null) {
-	                                statement.setDate(columnNumber + 1, new java.sql.Date(date.getTime()));
-	                            } else {
-	                                statement.setNull(columnNumber + 1, java.sql.Types.DATE);
-	                            }
-	                        } else {
-	                            double numericValue = sheet.getRow(rowNumber).getCell(columnNumber).getNumericCellValue();
-	                            statement.setString(columnNumber + 1, String.valueOf(numericValue));
-	                        }
-	                    }
-	                }
-	                statement.addBatch();
-	            }
+				PreparedStatement statement = conn.prepareStatement(generateInsertQuery(tableName, names));
 
-	            statement.executeBatch();
-	        }
-	    } catch (IOException e) {
-	        e.printStackTrace();
-	        System.out.println("Failed to upload the file.");
-	    }
+				for (int rowNumber = 1; rowNumber <= sheet.getLastRowNum(); rowNumber++) {
+					for (int columnNumber = 0; columnNumber < names.size(); columnNumber++) {
+						if (sheet.getRow(rowNumber).getCell(columnNumber).getCellType() == CellType.STRING) {
+							String cellValue = sheet.getRow(rowNumber).getCell(columnNumber).getStringCellValue();
+							statement.setString(columnNumber + 1, cellValue);
+						} else if (sheet.getRow(rowNumber).getCell(columnNumber).getCellType() == CellType.NUMERIC) {
+							if (isDateColumn.get(columnNumber)) {
+								Date date = sheet.getRow(rowNumber).getCell(columnNumber).getDateCellValue();
+								if (date != null) {
+									statement.setDate(columnNumber + 1, new java.sql.Date(date.getTime()));
+								} else {
+									statement.setNull(columnNumber + 1, java.sql.Types.DATE);
+								}
+							} else if (isNumericColumn.get(columnNumber)) {
+								if (sheet.getRow(rowNumber).getCell(columnNumber).getCellType() == CellType.BLANK
+										|| sheet.getRow(rowNumber).getCell(columnNumber)
+												.getCellType() == CellType.FORMULA) {
+									statement.setNull(columnNumber + 1, java.sql.Types.DOUBLE);
+								} else {
+									double numericValue = sheet.getRow(rowNumber).getCell(columnNumber)
+											.getNumericCellValue();
+									statement.setDouble(columnNumber + 1, numericValue);
+								}
+							} else {
+								String cellValue = sheet.getRow(rowNumber).getCell(columnNumber).getStringCellValue();
+								statement.setString(columnNumber + 1, cellValue);
+							}
+						} else {
+							statement.setNull(columnNumber + 1, java.sql.Types.VARCHAR);
+						}
+					}
+					statement.addBatch();
+				}
+				statement.executeBatch();
+			}	
+		} catch (IOException e) {
+			e.printStackTrace();
+			System.out.println("Failed to upload the file.");
+		}
 	}
 
 	private boolean tableExists(String tableName) {
-	    String query = "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'file_uploader' AND table_name = ?";
-	    int count = jdbcTemplate.queryForObject(query, new Object[]{tableName}, Integer.class);
-	    return count > 0;
+		String query = "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'file_uploader' AND table_name = ?";
+		int count = jdbcTemplate.queryForObject(query, new Object[] { tableName }, Integer.class);
+		return count > 0;
 	}
 
 	private String generateInsertQuery(String tableName, List<String> columnNames) {
-	    StringBuilder sb1 = new StringBuilder("INSERT INTO " + tableName + " (");
-	    StringBuilder sb2 = new StringBuilder("VALUES (");
+		StringBuilder sb1 = new StringBuilder("INSERT INTO " + tableName + " (");
+		StringBuilder sb2 = new StringBuilder("VALUES (");
 
-	    for (String name : columnNames) {
-	        sb1.append(name.replaceAll("[^\\w\\s]", "").replace(" ", "").toLowerCase()).append(",");
-	        sb2.append("?,");
-	    }
+		for (String name : columnNames) {
+			sb1.append(name.replaceAll("[^\\w\\s]", "").replace(" ", "").toLowerCase()).append(",");
+			sb2.append("?,");
+		}
 
-	    return sb1.substring(0, sb1.length() - 1) + ") " + sb2.substring(0, sb2.length() - 1) + ");";
+		return sb1.substring(0, sb1.length() - 1) + ") " + sb2.substring(0, sb2.length() - 1) + ");";
 	}
 }
